@@ -1,0 +1,79 @@
+name: CI/CD - IIS (dev)
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch: {}
+
+env:
+  PROJECT_PATH: WebApplication1/WebApplication1.csproj
+  CONFIGURATION: Release
+
+# Recommend setting these as repository secrets or variables in GitHub (Settings -> Secrets & variables)
+# You can override them in the UI when running workflow_dispatch
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore ${{ env.PROJECT_PATH }}
+
+      - name: Build
+        run: dotnet build ${{ env.PROJECT_PATH }} --configuration ${{ env.CONFIGURATION }} --no-restore
+
+      - name: Publish
+        id: publish
+        run: |
+          dotnet publish ${{ env.PROJECT_PATH }} -c ${{ env.CONFIGURATION }} -o $env:RUNNER_TEMP\publish
+
+      - name: Upload publish artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish
+          path: ${{ runner.temp }}\publish
+
+  deploy-dev:
+    needs: build
+    runs-on: [self-hosted, windows, dev]
+    steps:
+      - name: Checkout (for deploy script)
+        uses: actions/checkout@v4
+
+      - name: Download publish artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: publish
+          path: C:\temp\publish
+
+      - name: Run IIS deploy script
+        env:
+          IIS_SITE_NAME: ${{ secrets.IIS_SITE_NAME }}
+          IIS_APPPOOL: ${{ secrets.IIS_APPPOOL }}
+          IIS_DEPLOY_PATH: ${{ secrets.IIS_DEPLOY_PATH }}
+        run: |
+          # Use repo secrets if set, otherwise fallback to defaults
+          $siteName = $env:IIS_SITE_NAME
+          if ([string]::IsNullOrEmpty($siteName)) { $siteName = 'MyApp-Dev' }
+          $appPool = $env:IIS_APPPOOL
+          if ([string]::IsNullOrEmpty($appPool)) { $appPool = 'MyAppPool-Dev' }
+          $deployPath = $env:IIS_DEPLOY_PATH
+          if ([string]::IsNullOrEmpty($deployPath)) { $deployPath = 'C:\inetpub\wwwroot\MyApp-Dev' }
+
+          pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\scripts\deploy-iis.ps1 \
+            -ArtifactPath 'C:\temp\publish' \
+            -SiteName $siteName \
+            -AppPool $appPool \
+            -DeployPath $deployPath
