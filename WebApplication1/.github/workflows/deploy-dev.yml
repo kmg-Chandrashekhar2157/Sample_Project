@@ -1,9 +1,15 @@
-name: Deploy DEV
+name: Deploy DEV IIS
 
 on:
   push:
     branches:
-      - dev-branch
+      - develop
+
+env:
+  PROJECT_PATH: WebApplication1/WebApplication1.csproj
+  CONFIGURATION: Release
+  IIS_SITE: MyApp-Dev
+  DEPLOY_PATH: C:\inetpub\wwwroot\MyApp-Dev
 
 jobs:
 
@@ -13,33 +19,33 @@ jobs:
 
     steps:
 
-      # -----------------------------
-      # 1. Checkout source code
-      # -----------------------------
+      # -------------------------
+      # 1. Checkout
+      # -------------------------
       - name: Checkout Code
         uses: actions/checkout@v4
 
 
-      # -----------------------------
+      # -------------------------
       # 2. Setup .NET 10
-      # -----------------------------
+      # -------------------------
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
 
-      # -----------------------------
-      # 3. Display versions
-      # -----------------------------
+      # -------------------------
+      # 3. Check environment
+      # -------------------------
       - name: Check Environment
         shell: powershell
         run: |
-          Write-Host "======================================"
-          Write-Host "Environment Information"
-          Write-Host "======================================"
+          Write-Host "================================="
+          Write-Host "BUILD ENVIRONMENT"
+          Write-Host "================================="
 
-          Write-Host "Computer:"
+          Write-Host "Machine:"
           hostname
 
           Write-Host "User:"
@@ -48,37 +54,31 @@ jobs:
           Write-Host ".NET:"
           dotnet --version
 
-          Write-Host "PowerShell:"
-          $PSVersionTable.PSVersion
-
-          Write-Host "======================================"
+          Write-Host "================================="
 
 
-      # -----------------------------
+      # -------------------------
       # 4. Restore
-      # -----------------------------
+      # -------------------------
       - name: Restore
         shell: powershell
         run: |
-          Write-Host "Restoring NuGet packages..."
-          dotnet restore
+          dotnet restore "${{ env.PROJECT_PATH }}"
 
           if ($LASTEXITCODE -ne 0) {
-              Write-Error "dotnet restore failed"
+              Write-Error "Restore failed"
               exit 1
           }
 
 
-      # -----------------------------
+      # -------------------------
       # 5. Build
-      # -----------------------------
+      # -------------------------
       - name: Build
         shell: powershell
         run: |
-          Write-Host "Building application..."
-
-          dotnet build `
-            --configuration Release `
+          dotnet build "${{ env.PROJECT_PATH }}" `
+            --configuration "${{ env.CONFIGURATION }}" `
             --no-restore
 
           if ($LASTEXITCODE -ne 0) {
@@ -87,122 +87,129 @@ jobs:
           }
 
 
-      # -----------------------------
+      # -------------------------
       # 6. Test
-      # -----------------------------
+      # -------------------------
       - name: Test
         shell: powershell
         run: |
-          Write-Host "Running tests..."
-
           dotnet test `
-            --configuration Release `
+            --configuration "${{ env.CONFIGURATION }}" `
             --no-build
 
           if ($LASTEXITCODE -ne 0) {
-              Write-Error "Tests failed"
+              Write-Error "Test failed"
               exit 1
           }
 
 
-      # -----------------------------
+      # -------------------------
       # 7. Publish
-      # -----------------------------
+      # -------------------------
       - name: Publish
         shell: powershell
         run: |
-          Write-Host "Publishing application..."
 
           if (Test-Path ".\publish") {
               Remove-Item ".\publish" -Recurse -Force
           }
 
-          dotnet publish `
-            --configuration Release `
-            --output ".\publish"
+          dotnet publish "${{ env.PROJECT_PATH }}" `
+            --configuration "${{ env.CONFIGURATION }}" `
+            --output ".\publish" `
+            --no-restore
 
           if ($LASTEXITCODE -ne 0) {
               Write-Error "Publish failed"
               exit 1
           }
 
+          Write-Host "Published files:"
+          Get-ChildItem ".\publish" -Recurse
 
-      # -----------------------------
+
+      # -------------------------
       # 8. Deploy to IIS
-      # -----------------------------
+      # -------------------------
       - name: Deploy to IIS DEV
         shell: powershell
         run: |
 
           Import-Module WebAdministration
 
-          $SiteName = "MyApp-DEV"
-          $DeployPath = "C:\inetpub\wwwroot\MyApp-DEV"
+          Write-Host "================================="
+          Write-Host "IIS DEPLOYMENT STARTED"
+          Write-Host "================================="
 
-          Write-Host "======================================"
-          Write-Host "IIS DEPLOYMENT"
-          Write-Host "======================================"
+          Write-Host "IIS Site:"
+          Write-Host "${{ env.IIS_SITE }}"
 
-          Write-Host "Site       : $SiteName"
-          Write-Host "Path       : $DeployPath"
-          Write-Host "Environment: DEV"
+          Write-Host "Deployment Path:"
+          Write-Host "${{ env.DEPLOY_PATH }}"
 
           # Check IIS site
           $site = Get-Website `
-              -Name $SiteName `
+              -Name "${{ env.IIS_SITE }}" `
               -ErrorAction SilentlyContinue
 
           if ($null -eq $site) {
-              Write-Error "IIS site '$SiteName' does not exist."
+              Write-Error "IIS site '${{ env.IIS_SITE }}' does not exist."
               exit 1
           }
 
-          # Create deployment directory
-          if (!(Test-Path $DeployPath)) {
+          Write-Host "IIS site found."
 
-              Write-Host "Creating deployment directory..."
+          # Create folder if required
+          if (!(Test-Path "${{ env.DEPLOY_PATH }}")) {
+
+              Write-Host "Creating deployment folder..."
 
               New-Item `
-                  -ItemType Directory `
-                  -Path $DeployPath `
-                  -Force
+                -ItemType Directory `
+                -Path "${{ env.DEPLOY_PATH }}" `
+                -Force
           }
 
-          # Stop IIS site
+          # Stop website
           Write-Host "Stopping IIS site..."
 
           Stop-Website `
-              -Name $SiteName `
-              -ErrorAction Stop
+            -Name "${{ env.IIS_SITE }}" `
+            -ErrorAction Stop
 
-          # Copy files
+          Write-Host "IIS site stopped."
+
+          # Copy published files
           Write-Host "Copying published files..."
 
           Copy-Item `
-              ".\publish\*" `
-              $DeployPath `
-              -Recurse `
-              -Force
+            ".\publish\*" `
+            "${{ env.DEPLOY_PATH }}" `
+            -Recurse `
+            -Force `
+            -ErrorAction Stop
 
-          # Start IIS
+          Write-Host "Files copied successfully."
+
+          # Start website
           Write-Host "Starting IIS site..."
 
           Start-Website `
-              -Name $SiteName `
-              -ErrorAction Stop
+            -Name "${{ env.IIS_SITE }}" `
+            -ErrorAction Stop
+
+          Write-Host "IIS site started."
 
           # Verify
-          $site = Get-Website -Name $SiteName
+          $site = Get-Website `
+            -Name "${{ env.IIS_SITE }}"
 
-          Write-Host "======================================"
+          Write-Host "================================="
           Write-Host "DEPLOYMENT SUCCESSFUL"
-          Write-Host "======================================"
+          Write-Host "================================="
 
-          Write-Host "Site:"
-          Write-Host $site.Name
+          Write-Host "Site: $($site.Name)"
+          Write-Host "State: $($site.State)"
+          Write-Host "Path: ${{ env.DEPLOY_PATH }}"
 
-          Write-Host "State:"
-          Write-Host $site.State
-
-          Write-Host "Environment:"
-          Write-Host "DEV"
+          Write-Host "================================="
