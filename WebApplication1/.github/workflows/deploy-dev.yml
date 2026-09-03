@@ -15,7 +15,7 @@ jobs:
 
   build-and-deploy:
 
-    runs-on: [self-hosted, windows, iis]
+    runs-on: [self-hosted, windows]
 
     steps:
 
