@@ -47,7 +47,7 @@ jobs:
 
   deploy-dev:
     needs: build
-    runs-on: [self-hosted, windows, dev]
+    runs-on: [self-hosted, windows]
     steps:
       - name: Checkout (for deploy script)
         uses: actions/checkout@v4
