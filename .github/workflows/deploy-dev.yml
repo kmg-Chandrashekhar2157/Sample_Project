@@ -10,7 +10,7 @@ env:
   CONFIGURATION: Release
 
   IIS_SITE: MyApp-DEV1
-  IIS_APP_POOL: MyApp-DEV1-Pool
+  IIS_APP_POOL: MyApp-DEV1
   DEPLOY_PATH: C:\inetpub\wwwroot\MyApp-DEV1
 
 jobs:
