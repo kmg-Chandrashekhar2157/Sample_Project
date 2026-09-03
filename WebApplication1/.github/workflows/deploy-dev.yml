@@ -1,0 +1,208 @@
+name: Deploy DEV
+
+on:
+  push:
+    branches:
+      - dev-branch
+
+jobs:
+
+  build-and-deploy:
+
+    runs-on: [self-hosted, windows, iis]
+
+    steps:
+
+      # -----------------------------
+      # 1. Checkout source code
+      # -----------------------------
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+
+      # -----------------------------
+      # 2. Setup .NET 10
+      # -----------------------------
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+
+      # -----------------------------
+      # 3. Display versions
+      # -----------------------------
+      - name: Check Environment
+        shell: powershell
+        run: |
+          Write-Host "======================================"
+          Write-Host "Environment Information"
+          Write-Host "======================================"
+
+          Write-Host "Computer:"
+          hostname
+
+          Write-Host "User:"
+          whoami
+
+          Write-Host ".NET:"
+          dotnet --version
+
+          Write-Host "PowerShell:"
+          $PSVersionTable.PSVersion
+
+          Write-Host "======================================"
+
+
+      # -----------------------------
+      # 4. Restore
+      # -----------------------------
+      - name: Restore
+        shell: powershell
+        run: |
+          Write-Host "Restoring NuGet packages..."
+          dotnet restore
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "dotnet restore failed"
+              exit 1
+          }
+
+
+      # -----------------------------
+      # 5. Build
+      # -----------------------------
+      - name: Build
+        shell: powershell
+        run: |
+          Write-Host "Building application..."
+
+          dotnet build `
+            --configuration Release `
+            --no-restore
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Build failed"
+              exit 1
+          }
+
+
+      # -----------------------------
+      # 6. Test
+      # -----------------------------
+      - name: Test
+        shell: powershell
+        run: |
+          Write-Host "Running tests..."
+
+          dotnet test `
+            --configuration Release `
+            --no-build
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Tests failed"
+              exit 1
+          }
+
+
+      # -----------------------------
+      # 7. Publish
+      # -----------------------------
+      - name: Publish
+        shell: powershell
+        run: |
+          Write-Host "Publishing application..."
+
+          if (Test-Path ".\publish") {
+              Remove-Item ".\publish" -Recurse -Force
+          }
+
+          dotnet publish `
+            --configuration Release `
+            --output ".\publish"
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Publish failed"
+              exit 1
+          }
+
+
+      # -----------------------------
+      # 8. Deploy to IIS
+      # -----------------------------
+      - name: Deploy to IIS DEV
+        shell: powershell
+        run: |
+
+          Import-Module WebAdministration
+
+          $SiteName = "MyApp-DEV"
+          $DeployPath = "C:\inetpub\wwwroot\MyApp-DEV"
+
+          Write-Host "======================================"
+          Write-Host "IIS DEPLOYMENT"
+          Write-Host "======================================"
+
+          Write-Host "Site       : $SiteName"
+          Write-Host "Path       : $DeployPath"
+          Write-Host "Environment: DEV"
+
+          # Check IIS site
+          $site = Get-Website `
+              -Name $SiteName `
+              -ErrorAction SilentlyContinue
+
+          if ($null -eq $site) {
+              Write-Error "IIS site '$SiteName' does not exist."
+              exit 1
+          }
+
+          # Create deployment directory
+          if (!(Test-Path $DeployPath)) {
+
+              Write-Host "Creating deployment directory..."
+
+              New-Item `
+                  -ItemType Directory `
+                  -Path $DeployPath `
+                  -Force
+          }
+
+          # Stop IIS site
+          Write-Host "Stopping IIS site..."
+
+          Stop-Website `
+              -Name $SiteName `
+              -ErrorAction Stop
+
+          # Copy files
+          Write-Host "Copying published files..."
+
+          Copy-Item `
+              ".\publish\*" `
+              $DeployPath `
+              -Recurse `
+              -Force
+
+          # Start IIS
+          Write-Host "Starting IIS site..."
+
+          Start-Website `
+              -Name $SiteName `
+              -ErrorAction Stop
+
+          # Verify
+          $site = Get-Website -Name $SiteName
+
+          Write-Host "======================================"
+          Write-Host "DEPLOYMENT SUCCESSFUL"
+          Write-Host "======================================"
+
+          Write-Host "Site:"
+          Write-Host $site.Name
+
+          Write-Host "State:"
+          Write-Host $site.State
+
+          Write-Host "Environment:"
+          Write-Host "DEV"
