@@ -1,0 +1,420 @@
+name: CI/CD - IIS DEV
+
+on:
+  push:
+    branches:
+      - qa
+
+env:
+  PROJECT_PATH: WebApplication1/WebApplication1.csproj
+  CONFIGURATION: Release
+
+  IIS_SITE: MyApp-Qa
+  IIS_APP_POOL: MyApp-Qa
+  DEPLOY_PATH: C:\inetpub\wwwroot\MyApp-Qa
+
+jobs:
+
+  build-and-deploy:
+
+    runs-on: [self-hosted, windows]
+
+    steps:
+
+      # ==================================================
+      # 1. CHECKOUT SOURCE CODE
+      # ==================================================
+      - name: Checkout
+        uses: actions/checkout@v6
+
+
+      # ==================================================
+      # 2. SETUP .NET 10
+      # ==================================================
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+
+      # ==================================================
+      # 3. DISPLAY ENVIRONMENT INFORMATION
+      # ==================================================
+      - name: Environment Information
+        shell: powershell
+        run: |
+
+          Write-Host "=========================================="
+          Write-Host "CI/CD ENVIRONMENT"
+          Write-Host "=========================================="
+
+          Write-Host "Machine:"
+          hostname
+
+          Write-Host ""
+          Write-Host "User:"
+          whoami
+
+          Write-Host ""
+          Write-Host ".NET SDK:"
+          dotnet --version
+
+          Write-Host ""
+          Write-Host "Branch:"
+          Write-Host "${{ github.ref_name }}"
+
+          Write-Host ""
+          Write-Host "Commit:"
+          Write-Host "${{ github.sha }}"
+
+          Write-Host ""
+          Write-Host "=========================================="
+
+
+      # ==================================================
+      # 4. RESTORE
+      # ==================================================
+      - name: Restore
+        shell: powershell
+        run: |
+
+          Write-Host "=========================================="
+          Write-Host "RESTORE STARTED"
+          Write-Host "=========================================="
+
+          dotnet restore "${{ env.PROJECT_PATH }}"
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "RESTORE FAILED"
+              exit 1
+          }
+
+          Write-Host "RESTORE SUCCESSFUL"
+
+
+      # ==================================================
+      # 5. BUILD
+      # ==================================================
+      - name: Build
+        shell: powershell
+        run: |
+
+          Write-Host "=========================================="
+          Write-Host "BUILD STARTED"
+          Write-Host "=========================================="
+
+          dotnet build "${{ env.PROJECT_PATH }}" `
+            --configuration "${{ env.CONFIGURATION }}" `
+            --no-restore
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "BUILD FAILED"
+              exit 1
+          }
+
+          Write-Host "BUILD SUCCESSFUL"
+
+
+      # ==================================================
+      # 6. TEST
+      # ==================================================
+      - name: Test
+        shell: powershell
+        run: |
+
+          Write-Host "=========================================="
+          Write-Host "TEST STARTED"
+          Write-Host "=========================================="
+
+          dotnet test "${{ env.PROJECT_PATH }}" `
+            --configuration "${{ env.CONFIGURATION }}" `
+            --no-build
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "TEST FAILED"
+              exit 1
+          }
+
+          Write-Host "TEST SUCCESSFUL"
+
+
+      # ==================================================
+      # 7. PUBLISH
+      # ==================================================
+      - name: Publish
+        shell: powershell
+        run: |
+
+          $PublishPath = Join-Path $env:GITHUB_WORKSPACE "publish"
+
+          Write-Host "=========================================="
+          Write-Host "PUBLISH STARTED"
+          Write-Host "=========================================="
+
+          Write-Host "Publish Path:"
+          Write-Host $PublishPath
+
+          # Remove previous publish directory
+          if (Test-Path $PublishPath) {
+
+              Write-Host "Removing previous publish directory..."
+
+              Remove-Item `
+                $PublishPath `
+                -Recurse `
+                -Force
+          }
+
+          dotnet publish "${{ env.PROJECT_PATH }}" `
+            --configuration "${{ env.CONFIGURATION }}" `
+            --output $PublishPath `
+            --no-restore
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "PUBLISH FAILED"
+              exit 1
+          }
+
+          Write-Host ""
+          Write-Host "PUBLISH SUCCESSFUL"
+
+          Write-Host ""
+          Write-Host "Published Files:"
+          Get-ChildItem $PublishPath -Recurse
+
+
+      # ==================================================
+      # 8. DEPLOY TO IIS
+      # ==================================================
+      - name: Deploy to IIS DEV
+        shell: powershell
+        run: |
+
+          Import-Module WebAdministration
+
+          $SiteName = "${{ env.IIS_SITE }}"
+          $AppPoolName = "${{ env.IIS_APP_POOL }}"
+          $DeployPath = "${{ env.DEPLOY_PATH }}"
+          $PublishPath = Join-Path $env:GITHUB_WORKSPACE "publish"
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "IIS DEPLOYMENT STARTED"
+          Write-Host "=========================================="
+
+          Write-Host "IIS Site:"
+          Write-Host $SiteName
+
+          Write-Host "Application Pool:"
+          Write-Host $AppPoolName
+
+          Write-Host "Deployment Path:"
+          Write-Host $DeployPath
+
+          Write-Host "Publish Path:"
+          Write-Host $PublishPath
+
+          Write-Host "=========================================="
+
+
+          # ------------------------------------------
+          # CHECK PUBLISH DIRECTORY
+          # ------------------------------------------
+
+          if (!(Test-Path $PublishPath)) {
+
+              Write-Error "PUBLISH DIRECTORY NOT FOUND: $PublishPath"
+              exit 1
+          }
+
+          Write-Host "Publish directory exists."
+
+
+          # ------------------------------------------
+          # CHECK IIS SITE
+          # ------------------------------------------
+
+          $Site = Get-Website `
+            -Name $SiteName `
+            -ErrorAction SilentlyContinue
+
+          if ($null -eq $Site) {
+
+              Write-Error "IIS SITE NOT FOUND: $SiteName"
+              exit 1
+          }
+
+          Write-Host "IIS site found."
+
+
+          # ------------------------------------------
+          # CHECK APPLICATION POOL
+          # ------------------------------------------
+
+          $Pool = Get-WebAppPoolState `
+            -Name $AppPoolName `
+            -ErrorAction SilentlyContinue
+
+          if ($null -eq $Pool) {
+
+              Write-Error "APPLICATION POOL NOT FOUND: $AppPoolName"
+              exit 1
+          }
+
+          Write-Host "Application pool found."
+
+
+          # ------------------------------------------
+          # CREATE DEPLOYMENT DIRECTORY
+          # ------------------------------------------
+
+          if (!(Test-Path $DeployPath)) {
+
+              Write-Host "Deployment directory does not exist."
+              Write-Host "Creating directory..."
+
+              New-Item `
+                -ItemType Directory `
+                -Path $DeployPath `
+                -Force
+          }
+
+          Write-Host "Deployment directory ready."
+
+
+          # ------------------------------------------
+          # STOP IIS WEBSITE
+          # ------------------------------------------
+
+          Write-Host ""
+          Write-Host "Stopping IIS website..."
+
+          Stop-Website `
+            -Name $SiteName `
+            -ErrorAction Stop
+
+          Write-Host "IIS website stopped."
+
+
+          # ------------------------------------------
+          # STOP APPLICATION POOL
+          # ------------------------------------------
+
+          Write-Host "Stopping application pool..."
+
+          Stop-WebAppPool `
+            -Name $AppPoolName `
+            -ErrorAction Stop
+
+          Start-Sleep -Seconds 3
+
+          Write-Host "Application pool stopped."
+
+
+          # ------------------------------------------
+          # COPY FILES
+          # ------------------------------------------
+
+          Write-Host ""
+          Write-Host "Copying published files..."
+
+          Copy-Item `
+            "$PublishPath\*" `
+            $DeployPath `
+            -Recurse `
+            -Force `
+            -ErrorAction Stop
+
+          Write-Host "Files copied successfully."
+
+
+          # ------------------------------------------
+          # START APPLICATION POOL
+          # ------------------------------------------
+
+          Write-Host ""
+          Write-Host "Starting application pool..."
+
+          Start-WebAppPool `
+            -Name $AppPoolName `
+            -ErrorAction Stop
+
+          Start-Sleep -Seconds 3
+
+          Write-Host "Application pool started."
+
+
+          # ------------------------------------------
+          # START IIS WEBSITE
+          # ------------------------------------------
+
+          Write-Host "Starting IIS website..."
+
+          Start-Website `
+            -Name $SiteName `
+            -ErrorAction Stop
+
+          Start-Sleep -Seconds 2
+
+          Write-Host "IIS website started."
+
+
+          # ------------------------------------------
+          # VERIFY IIS
+          # ------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "VERIFYING IIS"
+          Write-Host "=========================================="
+
+          $FinalSite = Get-Website `
+            -Name $SiteName
+
+          $FinalPool = Get-WebAppPoolState `
+            -Name $AppPoolName
+
+          Write-Host "Site:"
+          Write-Host $FinalSite.Name
+
+          Write-Host "Site State:"
+          Write-Host $FinalSite.State
+
+          Write-Host "Application Pool:"
+          Write-Host $AppPoolName
+
+          Write-Host "Pool State:"
+          Write-Host $FinalPool.Value
+
+          Write-Host "Deployment Path:"
+          Write-Host $DeployPath
+
+
+          # ------------------------------------------
+          # FINAL VALIDATION
+          # ------------------------------------------
+
+          if ($FinalSite.State -ne "Started") {
+
+              Write-Error "IIS SITE FAILED TO START"
+              exit 1
+          }
+
+          if ($FinalPool.Value -ne "Started") {
+
+              Write-Error "APPLICATION POOL FAILED TO START"
+              exit 1
+          }
+
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "DEPLOYMENT SUCCESSFUL"
+          Write-Host "=========================================="
+
+          Write-Host "Environment : DEV"
+          Write-Host "IIS Site    : $SiteName"
+          Write-Host "App Pool    : $AppPoolName"
+          Write-Host "Status      : Started"
+
+          Write-Host "=========================================="
